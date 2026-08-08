@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PBCC Live Queue</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --line:#272c38;
+    --text:#e8ebf2; --muted:#8b93a7; --accent:#4f8cff; --accent2:#2b6bff;
+    --pri:#ffb020; --pri-bg:#3a2c0c; --done:#25c26e; --danger:#ff5d5d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+  header{position:sticky;top:0;z-index:5;background:linear-gradient(180deg,#141824,#0f1115);
+    border-bottom:1px solid var(--line);padding:14px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;letter-spacing:.3px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--danger);display:inline-block;margin-right:6px;box-shadow:0 0 8px rgba(255,93,93,.55)}
+  .dot.live{background:var(--done);box-shadow:0 0 8px var(--done)}
+  .stats{display:flex;gap:18px;flex-wrap:wrap}
+  .hdr-link{display:inline-flex;align-items:center;text-decoration:none;background:transparent;color:var(--text);
+    border:1px solid var(--line);border-radius:9px;font-size:13px;font-weight:600;padding:8px 12px;transition:.12s;white-space:nowrap}
+  .hdr-link:hover{filter:brightness(1.15);border-color:var(--accent)}
+  .hdr-logout{margin-left:auto}
+  .stat{text-align:center;min-width:64px}
+  .stat b{display:block;font-size:20px;line-height:1.1}
+  .stat span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  main{max-width:920px;margin:0 auto;padding:18px 16px 80px}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:nowrap}
+  .toolbar input{flex:1;min-width:140px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);padding:9px 12px;border-radius:9px;font-size:13px}
+  button{cursor:pointer;border:none;border-radius:9px;font-size:13px;font-weight:600;padding:9px 14px;
+    background:var(--panel2);color:var(--text);border:1px solid var(--line);transition:.12s}
+  button:hover{filter:brightness(1.15)}
+  button.primary{background:var(--accent2);border-color:var(--accent2)}
+  button.ghost{background:transparent}
+  .sectitle{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:22px 4px 10px}
+  .sectitle.collapser{cursor:pointer;user-select:none}
+  .sectitle .cav{display:inline-block;transition:transform .12s;font-size:9px;color:var(--muted)}
+  .sectitle.collapsed .cav{transform:rotate(-90deg)}
+  .secount{color:var(--muted);font-weight:700;letter-spacing:0}
+  .slot{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:9px}
+  .slotmain{display:flex;align-items:center;gap:12px;padding:12px 14px}
+  .slot.new{animation:pop .18s ease}
+  .slot.priority{border-color:var(--pri);background:linear-gradient(90deg,var(--pri-bg),var(--panel))}
+  .slot.bumped{outline:2px solid var(--accent)}
+  .slot.reorder{border-color:var(--done);box-shadow:0 0 0 1px var(--done) inset}
+  @keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  /* Inline expand: full item list revealed under the row */
+  .caret{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;
+    padding:6px 9px;font-size:12px;line-height:1;flex:none;transition:transform .12s,color .12s,border-color .12s}
+  .caret:hover{color:var(--text);border-color:var(--accent)}
+  .slot.expanded .caret{transform:rotate(90deg);color:var(--accent);border-color:var(--accent)}
+  .details{display:none;border-top:1px dashed var(--line);padding:10px 16px 12px 50px}
+  .slot.expanded .details{display:block}
+  .details .di{display:flex;gap:10px;padding:4px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04)}
+  .details .di:last-of-type{border-bottom:none}
+  .details .diq{color:var(--muted);font-variant-numeric:tabular-nums;min-width:34px;font-weight:700}
+  .details .dgh{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11px;font-weight:700;margin:7px 0 1px}
+  .details .dgh:first-child{margin-top:0}
+  .details .dsub{margin:9px 0 2px;font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--done);text-transform:uppercase}
+  .details .dord{color:var(--muted);font-size:11.5px;margin-top:9px;border-top:1px solid rgba(255,255,255,.06);padding-top:7px}
+  .pos{font-variant-numeric:tabular-nums;font-weight:800;font-size:18px;width:34px;text-align:center;color:var(--muted)}
+  .slot.priority .pos{color:var(--pri)}
+  .who{flex:1;min-width:0}
+  .who .name{font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;
+    min-width:0;overflow:hidden;white-space:nowrap}
+  .who .name .ordno{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:0}
+  .badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.4px;
+    white-space:nowrap;flex:none}
+  .badge.pri{background:var(--pri);color:#2a1e00}
+  .badge.multi{background:#31384a;color:#cdd4e4}
+  .badge.back{background:#12303a;color:#7fdce8}
+  .badge.reorder{background:var(--done);color:#04180d;animation:pulse 1.3s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  .badge.samename{background:#4a2c00;color:#ffcf87;border:1px solid var(--pri)}
+  .badge.hold{background:var(--danger);color:#fff;animation:pulse 1.3s ease-in-out infinite}
+  .slot.onhold{border-color:var(--danger);box-shadow:0 0 0 1px var(--danger) inset}
+  .idtag{color:var(--muted);font-size:11px;font-weight:600;flex:none}
+  .who .items{font-size:12.5px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .money{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums;margin-right:4px;white-space:nowrap}
+  .actions{display:flex;gap:8px;align-items:center}
+  .actions button{padding:8px 11px}
+  .fulfill{background:var(--done);border-color:var(--done);color:#04180d;margin-left:16px}
+  .bumpb{background:transparent;color:var(--accent)}
+  .labelb{background:transparent;color:#cdd4e4}
+  .removeb{background:transparent;color:var(--muted);border:1px solid transparent;padding:6px 9px;
+    font-size:14px;line-height:1;flex:none}
+  .removeb:hover{color:var(--danger);border-color:var(--danger)}
+  button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  .empty{color:var(--muted);text-align:center;padding:40px;border:1px dashed var(--line);border-radius:12px}
+  .done-row{display:flex;gap:12px;align-items:center;padding:8px 12px;color:var(--muted);font-size:13px;
+    border-bottom:1px solid var(--line)}
+  .done-row .name{color:var(--text)}
+  .cancel-row{border-left:2px solid var(--danger)}
+  .cancel-row .name{text-decoration:line-through;color:var(--muted)}
+  .undob{background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:8px;
+    font-size:12px;font-weight:600;padding:5px 10px;cursor:pointer;white-space:nowrap}
+  .undob:hover{color:var(--text);border-color:var(--accent)}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:20}
+  .modal.open{display:flex}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;width:min(520px,92vw)}
+  .card h3{margin:0 0 6px}
+  .card p{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .card textarea{width:100%;height:110px;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:10px;font-size:13px;font-family:inherit;resize:vertical}
+  .row{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .chip{background:var(--pri-bg);color:var(--pri);border:1px solid var(--pri);border-radius:20px;padding:3px 10px;font-size:12px}
+  .livebadge{font-size:10px;font-weight:800;letter-spacing:.6px;padding:3px 8px;border-radius:20px;
+    background:#3a2020;color:#ff8b8b;vertical-align:middle;margin-left:6px}
+  .livebadge.on{background:#12331f;color:#43e08a;box-shadow:0 0 8px rgba(67,224,138,.4)}
+  .ttbadge{font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:20px;vertical-align:middle;margin-left:4px}
+  .ttbadge.ok{background:#0e2a44;color:#6fb3ff}
+  .ttbadge.bad{background:#3a2020;color:#ff8b8b}
+  .tt-banner a{color:#ffd7d7;font-weight:700}
+  button.livebtn{background:var(--done);border-color:var(--done);color:#04180d;font-weight:800}
+  button.livebtn.off{background:#c23b3b;border-color:#c23b3b;color:#fff}
+  .offline-banner{background:#2a1a1a;border:1px solid #5a2a2a;color:#ffb3b3;border-radius:11px;
+    padding:11px 14px;margin:6px 0 14px;font-size:13px}
+  .ordno{color:#748099;font-variant-numeric:tabular-nums;font-size:11.5px;margin-right:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1><span id="dot" class="dot"></span>PBCC Live Queue <span id="liveBadge" class="livebadge">OFFLINE</span> <span id="ttStatus" class="ttbadge" style="display:none"></span></h1>
+  <a href="/guide" target="_blank" class="hdr-link">📖 Guide ↗</a>
+  <a href="{{ADMIN}}/logout" class="hdr-link hdr-logout">Log out</a>
+  <div class="stats">
+    <div class="stat"><b id="s-active">0</b><span>In queue</span></div>
+    <div class="stat"><b id="s-pri">0</b><span>Priority</span></div>
+    <div class="stat"><b id="s-val">$0</b><span>Queue value</span></div>
+    <div class="stat"><b id="s-done">0</b><span>Fulfilled</span></div>
+  </div>
+</header>
+
+<main>
+  <div class="toolbar">
+    <button id="liveBtn" class="livebtn" onclick="toggleLive()">● Go Live</button>
+    <input id="search" placeholder="Filter by buyer…" oninput="render()" />
+    <button class="ghost" onclick="openPriority()">⭐ Priority items</button>
+    <button class="ghost" onclick="resetQueue()">Reset</button>
+    <a href="{{ADMIN}}/history" style="text-decoration:none"><button class="ghost">🗂 Past streams ↗</button></a>
+    <a href="/" target="_blank" style="text-decoration:none"><button class="ghost">Public view ↗</button></a>
+  </div>
+
+  <div class="chips" id="pri-chips"></div>
+
+  <div id="offline-banner" class="offline-banner" style="display:none">
+    ⚫ You're <b>offline</b> — new orders are being ignored and won't enter the queue. Hit <b>Go Live</b> to start a fresh queue and begin accepting orders.
+  </div>
+
+  <div id="tt-banner" class="offline-banner" style="display:none"></div>
+
+  <div class="sectitle">Active queue — top is next</div>
+  <div id="queue"></div>
+
+  <div class="sectitle collapser" id="fhead" onclick="toggleSection('fulfilled')" style="display:flex;align-items:center;gap:8px">
+    <span class="cav">▾</span><span>Fulfilled this stream</span><span class="secount" id="f-count"></span>
+    <a href="/api/export" style="text-decoration:none;margin-left:auto" onclick="event.stopPropagation()"><button class="ghost">⬇ Export CSV</button></a>
+  </div>
+  <div id="fulfilled"></div>
+
+  <div class="sectitle collapser" id="chead" onclick="toggleSection('cancelled')" style="display:flex;align-items:center;gap:8px">
+    <span class="cav">▾</span><span>Cancelled this stream</span><span class="secount" id="c-count"></span>
+  </div>
+  <div id="cancelled"></div>
+</main>
+
+<div class="modal" id="confirmModal">
+  <div class="card">
+    <h3 id="cm-title">Confirm</h3>
+    <p id="cm-body"></p>
+    <div class="row">
+      <button class="ghost" id="cm-cancel">Cancel</button>
+      <button class="primary" id="cm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="card">
+    <h3>Priority items</h3>
+    <p>Any order containing one of these (matched inside the item name or SKU) jumps to the top of the queue. One per line. Example: <em>break</em>, <em>slab</em>, <em>PSA 10</em>.</p>
+    <textarea id="pri-input" placeholder="break&#10;slab&#10;box break"></textarea>
+    <div class="row">
+      <button class="ghost" onclick="closePriority()">Cancel</button>
+      <button class="primary" onclick="savePriority()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const socket = io('/panel');
+  let state = { queue: [], fulfilled: [], stats: {}, config: { priorityItems: [] } };
+
+  socket.on('state', (s) => { state = s; render(); });
+
+  function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+  function money(n){return '$'+Number(n||0).toFixed(2);}
+  // Shortened order # for the compact queue rows — last 8 digits, with a leading
+  // ellipsis so it's clearly a partial. Full numbers stay in the expanded view,
+  // the printed label, and the CSV export.
+  function shortId(id){ const s=String(id); return s.length>8 ? '…'+s.slice(-8) : s; }
+
+  async function post(url){ await fetch(url,{method:'POST'}); }
+  function fulfill(key){ post('/api/fulfill/'+encodeURIComponent(key)); }
+  function bump(key){ post('/api/bump/'+encodeURIComponent(key)); }
+
+  // Deliberate confirmation modal (returns a Promise<boolean>). Used for the
+  // destructive actions — Reset, End Live, Remove — so they can't be blown
+  // through by a stray click the way a native confirm() sometimes can.
+  function uiConfirm({title, body, confirmText='Confirm', danger=false}){
+    return new Promise((resolve)=>{
+      const m=document.getElementById('confirmModal');
+      document.getElementById('cm-title').textContent=title;
+      document.getElementById('cm-body').textContent=body;
+      const ok=document.getElementById('cm-ok');
+      const cancel=document.getElementById('cm-cancel');
+      ok.textContent=confirmText;
+      ok.className = danger ? 'danger' : 'primary';
+      m.classList.add('open');
+      const done=(v)=>{ m.classList.remove('open'); ok.onclick=null; cancel.onclick=null; resolve(v); };
+      ok.onclick=()=>done(true);
+      cancel.onclick=()=>done(false);
+    });
+  }
+
+  // Remove an order from the queue without fulfilling it (e.g. buyer cancelled).
+  async function removeOrder(key){
+    if(await uiConfirm({title:'Remove this order from the queue?',
+      body:'Use this if the buyer cancelled. The order leaves the queue and is NOT counted as fulfilled or exported.',
+      confirmText:'Remove order', danger:true}))
+      await post('/api/remove/'+encodeURIComponent(key));
+  }
+  // Undo an accidental fulfill: move the order back into the active queue.
+  async function reopenOrder(key){
+    try {
+      const r = await fetch('/api/reopen/'+encodeURIComponent(key), {method:'POST'});
+      const j = await r.json().catch(()=>({}));
+      if(!j.ok) alert("Couldn't undo this one — that buyer already has a newer order in the queue, so it can't merge back automatically.");
+    } catch(e){ /* ignore */ }
+  }
+
+  // --- Thermal bag label (2.25" x 1.25") ---
+  // Renders username + order number(s) into an off-screen iframe whose page size
+  // is locked to the label, auto-shrinks the text to fit, and opens the print
+  // dialog. Pick your thermal printer there (set it as default to make it 1 click).
+  function printLabel(key){
+    const e = (state.queue||[]).find(x=>x.key===key);
+    if(!e) return;
+    const uname = e.buyer || 'Buyer';
+    const ords = (e.orderIds||[]);
+    const ordLine = ords.map(id=>'#'+id).join('   ');
+    const countLine = (e.orderCount>1) ? (e.orderCount+' orders in this batch') : '';
+    // Thermal printers only lay down BLACK, and browsers skip background fills
+    // unless "Background graphics" is on — so flags are black text in a black
+    // outline (no fill, no emoji) to guarantee they print. Multiple can stack.
+    const flags = [];
+    if(e.priorFulfilled>0) flags.push('EARLIER ORDERS TODAY');
+    // Same-name distinction: if another buyer in the queue shares this exact
+    // display name, print a last-4 id tag so the right bag goes to the right person.
+    const dupe = (state.queue||[]).filter(x=>(x.buyer||'').toLowerCase()===uname.toLowerCase()).length>1;
+    const idTag = dupe ? ('id …'+String(e.buyerId||'').slice(-4)) : '';
+    const doc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      @page{size:2.25in 1.25in;margin:0}
+      html,body{margin:0;padding:0;width:2.25in;height:1.25in}
+      body{display:flex;flex-direction:column;justify-content:center;align-items:center;
+        box-sizing:border-box;padding:0.05in 0.08in;font-family:Arial,Helvetica,sans-serif;
+        text-align:center;color:#000;background:#fff;overflow:hidden}
+      .flag{border:1.5px solid #000;color:#000;background:#fff;font-weight:800;font-size:8.5px;
+        padding:1px 6px;border-radius:3px;letter-spacing:.4px;margin-bottom:3px;white-space:nowrap}
+      .uname{font-weight:800;line-height:1.03;word-break:break-word;max-width:100%}
+      .idtag{font-size:8px;font-weight:700;color:#000;margin-top:1px}
+      .count{font-size:10px;font-weight:700;margin-top:2px;text-transform:uppercase;letter-spacing:.4px}
+      .ord{margin-top:5px;font-family:'Courier New',monospace;font-weight:700;line-height:1.15;
+        word-break:break-all;max-width:100%}
+    </style></head><body>
+      ${flags.map(f=>`<div class="flag">${esc(f)}</div>`).join('')}
+      <div class="uname" id="u">${esc(uname)}</div>
+      ${idTag?`<div class="idtag">${esc(idTag)}</div>`:''}
+      ${countLine?`<div class="count">${esc(countLine)}</div>`:''}
+      ${ordLine?`<div class="ord" id="o">${esc(ordLine)}</div>`:''}
+      <script>(function(){
+        function shrinkWidth(el,start,min){var s=start;el.style.fontSize=s+'px';
+          while(s>min && el.scrollWidth>el.clientWidth){s--;el.style.fontSize=s+'px';}return s;}
+        var b=document.body;
+        var u=document.getElementById('u');var o=document.getElementById('o');
+        // Username: prefer it on ONE line — force no-wrap and shrink to fit the
+        // width. Only if it's still too wide at the floor do we allow a wrap,
+        // so normal names never break mid-word (e.g. "test_collector").
+        u.style.whiteSpace='nowrap';
+        var us=shrinkWidth(u,30,13);
+        if(u.scrollWidth>u.clientWidth){ u.style.whiteSpace='normal'; } // very long name -> wrap at floor
+        var os=o?shrinkWidth(o,13,7):0;
+        // Overall height fit (rare, e.g. many order numbers): shrink the order
+        // line first, then the name. overflow:hidden clips anything left over so
+        // a label never bleeds past its 2.25x1.25 area.
+        var guard=0;
+        while(b.scrollHeight>b.clientHeight && guard<120){
+          if(o && os>7){ os--; o.style.fontSize=os+'px'; }
+          else if(us>9){ us--; u.style.fontSize=us+'px'; }
+          else break;
+          guard++;
+        }
+        window.focus();
+        setTimeout(function(){window.print();},60);
+      })();<\/script>
+    </body></html>`;
+    let f = document.getElementById('labelFrame');
+    if(!f){
+      f = document.createElement('iframe');
+      f.id = 'labelFrame';
+      f.style.cssText = 'position:fixed;left:-10000px;top:0;width:2.4in;height:1.4in;border:0;background:#fff';
+      document.body.appendChild(f);
+    }
+    f.srcdoc = doc;
+  }
+  async function toggleLive(){
+    const live = (state.stats||{}).live;
+    if(!live){
+      if(!(await uiConfirm({title:'Start a new live?',
+        body:'This starts a fresh stream and begins accepting new orders. Anything left from a previous stream that wasn\'t ended is archived to Past streams first.',
+        confirmText:'Go live', danger:false}))) return;
+      await post('/api/live/on');
+    } else {
+      const n = (state.stats||{}).activeCount||0;
+      const body = n>0
+        ? `You still have ${n} order${n===1?'':'s'} in the queue that ${n===1?"hasn't":"haven't"} been fulfilled. Ending will archive EVERYTHING (fulfilled, cancelled, and those ${n} unfulfilled) to Past streams and clear the board. New orders stop entering.`
+        : 'This archives this stream (fulfilled + cancelled) to Past streams and clears the board. New orders stop entering. You can review or export it anytime from Past streams.';
+      if(!(await uiConfirm({title:'End the live?', body, confirmText:'End live', danger:true}))) return;
+      await post('/api/live/off');
+    }
+  }
+  async function resetQueue(){
+    if(await uiConfirm({title:'Reset the entire queue?',
+      body:'This clears every active AND fulfilled order for the current stream. Priority words are kept. This cannot be undone.',
+      confirmText:'Yes, reset everything', danger:true}))
+      await post('/api/reset');
+  }
+
+  function openPriority(){
+    document.getElementById('pri-input').value = (state.config.priorityItems||[]).join('\n');
+    document.getElementById('modal').classList.add('open');
+  }
+  function closePriority(){ document.getElementById('modal').classList.remove('open'); }
+  async function savePriority(){
+    const items = document.getElementById('pri-input').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    await fetch('/api/priority-items',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({items})});
+    closePriority();
+  }
+
+  // --- In-place list rendering so updates don't flash ---
+  const slotNodes = new Map(); // key -> element (reused across updates)
+  const expandedKeys = new Set(); // slots the user has expanded to see all items
+  let fulfilledSig = '';
+  let cancelledSig = '';
+
+  // Collapse/expand the Fulfilled + Cancelled sections (state kept in memory so
+  // it persists across live updates).
+  let fulfilledCollapsed=false, cancelledCollapsed=false;
+  function toggleSection(which){
+    if(which==='fulfilled') fulfilledCollapsed=!fulfilledCollapsed; else cancelledCollapsed=!cancelledCollapsed;
+    applyCollapse();
+  }
+  function applyCollapse(){
+    const fEl=document.getElementById('fulfilled'), cEl=document.getElementById('cancelled');
+    const fh=document.getElementById('fhead'), ch=document.getElementById('chead');
+    if(fEl) fEl.style.display=fulfilledCollapsed?'none':'';
+    if(fh) fh.classList.toggle('collapsed',fulfilledCollapsed);
+    if(cEl) cEl.style.display=cancelledCollapsed?'none':'';
+    if(ch) ch.classList.toggle('collapsed',cancelledCollapsed);
+  }
+
+  // Toggle the inline "all items" panel for a slot. Purely visual — flips a
+  // class, so it survives live updates (we re-apply from expandedKeys on render).
+  function toggleExpand(key){
+    if(expandedKeys.has(key)) expandedKeys.delete(key); else expandedKeys.add(key);
+    const node = slotNodes.get(key);
+    if(node) node.classList.toggle('expanded', expandedKeys.has(key));
+  }
+
+  function slotInner(e){
+    const itemStr = e.items.map(i=>`${i.qty}× ${i.name}`).join(', ');
+    const priBadge = e.isPriority?'<span class="badge pri">PRIORITY</span>':'';
+    const countBadge = `<span class="badge multi">${e.orderCount} order${e.orderCount===1?'':'s'}</span>`;
+    // Loud heads-up: this buyer ordered AGAIN while already at the top (bag likely
+    // in progress). Only flash it while they're CURRENTLY #1 — the one being
+    // packed right now; if a bump/priority pushes them down it stops flashing.
+    const raCount = e.reorderedAtTopCount || 0;
+    const reorderBadge = (raCount > 0 && e.position === 1)
+      ? `<span class="badge reorder" title="This buyer ordered again while at the TOP of the queue — they likely have a bag being packed. Add the new item(s) to it. The ×N counts how many times they've added while at the top, so a higher number means more came in since you last checked.">＋ ADDED MORE${raCount>1?' ×'+raCount:''}</span>` : '';
+    const backBadge = (e.priorFulfilled>0)
+      ? `<span class="badge back" title="This buyer already had ${e.priorFulfilled} order(s) fulfilled earlier this stream — check whether this should be combined">🔁 ${e.priorFulfilled} earlier today</span>` : '';
+    // Two different buyers sharing an identical display name — flag + id tag.
+    const dupBadge = e._dupName ? `<span class="badge samename" title="Another buyer in the queue has this exact display name — these are different people. Use the order numbers / id to keep them separate.">⚠ SAME NAME</span>` : '';
+    // TikTok has this order On Hold — most often a buyer cancellation request on
+    // an unshipped order (can also be an address / fraud hold). Verify before shipping.
+    const holdBadge = e.onHold ? `<span class="badge hold" title="TikTok put this order ON HOLD — during a live this is almost always a buyer cancellation request on an unshipped order (occasionally an address or fraud hold). Do NOT ship / seal the bag until you've checked it.">⚠ CANCEL REQ</span>` : '';
+    const idTag = e._dupName ? `<span class="idtag" title="Buyer id (last 4) — tells same-named buyers apart">id …${esc(e._idTag)}</span>` : '';
+    const ordNos = `<span class="ordno">${e.orderIds.map(id=>'#'+esc(shortId(id))).join(' ')}</span>`;
+    // Expanded view: items grouped by order number, with anything the buyer added
+    // after hitting #1 pulled out under a green "Added since top of queue" header.
+    const lines = e.orderLines || e.orderIds.map(id=>({id, items:e.items, addedSinceTop:false}));
+    const multi = lines.length > 1;
+    const itemRow = (i)=>`<div class="di"><span class="diq">${i.qty}×</span><span>${esc(i.name)}</span></div>`;
+    const groupHtml = (l)=> (multi?`<div class="dgh">#${esc(shortId(l.id))}</div>`:'') + (l.items||[]).map(itemRow).join('');
+    const base = lines.filter(l=>!l.addedSinceTop);
+    const added = lines.filter(l=>l.addedSinceTop);
+    let detailItems = base.map(groupHtml).join('');
+    if(added.length){
+      detailItems += `<div class="dsub">＋ Added since top of queue</div>` + added.map(groupHtml).join('');
+    }
+    const detailOrds = `<div class="dord">Full order number${e.orderIds.length>1?'s':''}: ${e.orderIds.map(id=>'#'+esc(id)).join('  ')}</div>`;
+    return `<div class="slotmain">`
+      + `<button class="removeb" title="Remove from queue (e.g. buyer cancelled)" onclick="removeOrder('${e.key}')">✕</button>`
+      + `<div class="pos">${e.position}</div>`
+      + `<div class="who"><div class="name">${esc(e.buyer)} ${idTag} ${priBadge} ${countBadge} ${holdBadge} ${reorderBadge} ${dupBadge} ${backBadge} ${ordNos}</div>`
+      + `<div class="items">${esc(itemStr)}</div></div>`
+      + `<button class="caret" title="Show/hide every item in this order" onclick="toggleExpand('${e.key}')">▸</button>`
+      + `<button class="labelb" title="Print 2.25×1.25 label" onclick="printLabel('${e.key}')">🏷 Label</button>`
+      + `<div class="money">${money(e.total)}</div>`
+      + `<div class="actions">${(e.bumped||e.position===1)?'':`<button class="bumpb" title="Bump to top" onclick="bump('${e.key}')">▲</button>`}`
+      + `<button class="fulfill" onclick="fulfill('${e.key}')">✓ Fulfilled</button></div>`
+      + `</div>`
+      + `<div class="details">${detailItems}${detailOrds}</div>`;
+  }
+  function slotSig(e){
+    return [e.position,e.buyer,e.isPriority,e.bumped,e.orderCount,e.total,e.priorFulfilled||0,
+      e.reorderedAtTop?1:0,e.reorderedAtTopCount||0,e.onHold?1:0,e._dupName?1:0,e._idTag||'',
+      e.orderIds.join(','),e.items.map(i=>i.qty+'x'+i.name).join('|')].join('~');
+  }
+  function renderQueue(){
+    const filter = (document.getElementById('search').value||'').toLowerCase();
+    // Detect buyers who share an identical display name with ANOTHER buyer in
+    // the queue (different people, same TikTok name). Count over the WHOLE queue
+    // so a search filter never hides a duplicate. (#4)
+    const nameCounts = {};
+    for(const e of (state.queue||[])){ const n=(e.buyer||'').toLowerCase(); nameCounts[n]=(nameCounts[n]||0)+1; }
+    const list = (state.queue||[]).filter(e=>!filter || e.buyer.toLowerCase().includes(filter));
+    for(const e of list){
+      e._dupName = nameCounts[(e.buyer||'').toLowerCase()]>1;
+      e._idTag = e._dupName ? String(e.buyerId||'').slice(-4) : '';
+    }
+    const qEl = document.getElementById('queue');
+    if(!list.length){
+      if(!qEl.querySelector('.empty')) qEl.innerHTML = '<div class="empty">Queue is empty — waiting on orders.</div>';
+      slotNodes.forEach(n=>n.remove()); slotNodes.clear();
+      return;
+    }
+    const emptyEl = qEl.querySelector('.empty'); if(emptyEl) emptyEl.remove();
+    const seen = new Set();
+    list.forEach((e, idx) => {
+      seen.add(e.key);
+      let node = slotNodes.get(e.key);
+      const sig = slotSig(e);
+      if(!node){
+        node = document.createElement('div');
+        node.className = 'slot new'+(e.isPriority?' priority':'')+(e.bumped?' bumped':'')+((e.reorderedAtTop&&e.position===1)?' reorder':'')+(e.onHold?' onhold':'');
+        node.innerHTML = slotInner(e);
+        node._sig = sig;
+        slotNodes.set(e.key, node);
+        setTimeout(()=>node.classList.remove('new'), 260);
+      } else if(node._sig !== sig){
+        // update only the changed row's contents in place
+        node.className = 'slot'+(e.isPriority?' priority':'')+(e.bumped?' bumped':'')+((e.reorderedAtTop&&e.position===1)?' reorder':'')+(e.onHold?' onhold':'');
+        node.innerHTML = slotInner(e);
+        node._sig = sig;
+      }
+      // preserve the user's expand/collapse choice across live updates
+      node.classList.toggle('expanded', expandedKeys.has(e.key));
+      // move into position ONLY if it's not already there (no needless re-attach)
+      if(qEl.children[idx] !== node) qEl.insertBefore(node, qEl.children[idx] || null);
+    });
+    for(const [key,node] of slotNodes){ if(!seen.has(key)){ node.remove(); slotNodes.delete(key); expandedKeys.delete(key); } }
+  }
+
+  function render(){
+    const st = state.stats||{};
+    const live = !!st.live;
+    document.getElementById('dot').classList.toggle('live', live); // green = live, red = offline
+    const badge = document.getElementById('liveBadge');
+    badge.textContent = live ? 'LIVE' : 'OFFLINE';
+    badge.classList.toggle('on', live);
+    const lb = document.getElementById('liveBtn');
+    lb.textContent = live ? '■ End Live' : '● Go Live';
+    lb.classList.toggle('off', !live);
+    document.getElementById('offline-banner').style.display = live ? 'none' : 'block';
+
+    document.getElementById('s-active').textContent = st.activeCount||0;
+    document.getElementById('s-pri').textContent = st.priorityCount||0;
+    document.getElementById('s-val').textContent = money(st.activeValue);
+    document.getElementById('s-done').textContent = st.fulfilledCount||0;
+
+    const chips = document.getElementById('pri-chips');
+    const chipSig = (state.config.priorityItems||[]).join('|');
+    if(chips._sig !== chipSig){
+      chips._sig = chipSig;
+      chips.innerHTML = (state.config.priorityItems||[]).map(p=>`<span class="chip">⭐ ${esc(p)}</span>`).join('');
+    }
+
+    renderQueue();
+
+    const fEl = document.getElementById('fulfilled');
+    const f = state.fulfilled||[];
+    document.getElementById('f-count').textContent = f.length ? '('+f.length+')' : '';
+    const fSig = JSON.stringify(f.map(s=>[s.key,s.buyer,s.itemCount,s.total,(s.orderIds||[]).join(',')]));
+    if(fSig !== fulfilledSig){
+      fulfilledSig = fSig;
+      fEl.innerHTML = f.length ? f.map(s=>`<div class="done-row">
+          <span class="ordno">${(s.orderIds||[]).map(id=>'#'+esc(id)).join(' ')}</span>
+          <span class="name">${esc(s.buyer)}</span>
+          <span>${s.itemCount} item${s.itemCount===1?'':'s'}</span>
+          <span style="margin-left:auto">${money(s.total)}</span>
+          <button class="undob" title="Move this order back into the queue" onclick="reopenOrder('${s.key}')">↩ Undo</button>
+        </div>`).join('') : '<div class="empty">Nothing fulfilled yet this stream.</div>';
+    }
+
+    const cEl = document.getElementById('cancelled');
+    const c = state.cancelled||[];
+    document.getElementById('c-count').textContent = c.length ? '('+c.length+')' : '';
+    const cSig = JSON.stringify(c.map(s=>[s.key,s.buyer,s.itemCount,s.total,(s.orderIds||[]).join(',')]));
+    if(cSig !== cancelledSig){
+      cancelledSig = cSig;
+      cEl.innerHTML = c.length ? c.map(s=>`<div class="done-row cancel-row">
+          <span class="ordno">${(s.orderIds||[]).map(id=>'#'+esc(id)).join(' ')}</span>
+          <span class="name">${esc(s.buyer)}</span>
+          <span>${s.itemCount} item${s.itemCount===1?'':'s'}</span>
+          <span style="margin-left:auto">${money(s.total)}</span>
+          <button class="undob" title="Put this order back into the queue" onclick="reopenOrder('${s.key}')">↩ Restore</button>
+        </div>`).join('') : '<div class="empty">No cancelled orders this stream.</div>';
+    }
+
+    applyCollapse();
+  }
+
+  render();
+
+  // --- TikTok connection status ---
+  async function refreshTikTok(){
+    let s; try { s = await (await fetch('/api/tiktok-status')).json(); } catch { return; }
+    const badge = document.getElementById('ttStatus');
+    const banner = document.getElementById('tt-banner');
+    if(!s.enabled){ badge.style.display='none'; banner.style.display='none'; return; }
+    badge.style.display='';
+    if(s.connected){
+      badge.className='ttbadge ok';
+      badge.textContent = 'TikTok ✓' + (s.shop ? ' '+s.shop : '');
+      banner.style.display='none';
+    } else {
+      badge.className='ttbadge bad';
+      badge.textContent = 'TikTok ⚠ not connected';
+      banner.className='offline-banner tt-banner';
+      banner.style.display='block';
+      banner.innerHTML = '⚠ <b>TikTok isn\'t connected right now</b>, so live orders won\'t come in.'
+        + (s.authUrl ? ' <a href="'+s.authUrl+'" target="_blank">Reconnect your shop →</a>' : ' Reconnect it from the authorization link.')
+        + (s.lastError ? '<br><span style="opacity:.7;font-size:12px">('+esc(s.lastError)+')</span>' : '');
+    }
+  }
+  if(new URLSearchParams(location.search).get('tiktok')==='connected'){
+    history.replaceState({}, '', location.pathname);
+  }
+  refreshTikTok();
+  setInterval(refreshTikTok, 30000);
+</script>
+</body>
+</html>
