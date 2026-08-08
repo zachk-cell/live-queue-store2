@@ -53,6 +53,29 @@ function buildQueueMessage(queue) {
   return lines.join('\n');
 }
 
+// Piggy Bank tracker — a SEPARATE auto-updating message so it can be paused or
+// removed without touching the queue message. Returns null when the store has no
+// tracked variants (e.g. the PBCC store), in which case no piggy message is
+// created at all. Always rendered regardless of live/offline state, since the
+// counts are cumulative and persist across streams.
+function buildPiggyMessage(queue) {
+  const snap = queue.snapshot();
+  const vs = snap.variants || [];
+  if (!vs.length) return null;
+  const lines = [];
+  lines.push('**🐷 Piggy Bank Tracker**');
+  lines.push('_Persists Across Streams Until Hit_');
+  lines.push('');
+  const width = Math.max(...vs.map((v) => String(Number(v.count) || 0).length));
+  for (const v of vs) {
+    const n = String(Number(v.count) || 0).padStart(width);
+    lines.push(`\`${n}\` ${v.label}`);
+  }
+  lines.push('');
+  lines.push(`_Updated <t:${Math.floor(Date.now() / 1000)}:R>_`);
+  return lines.join('\n');
+}
+
 export async function startDiscord(queue) {
   if (!discordEnabled()) {
     console.log('[discord] disabled (set DISCORD_ENABLED=true + token to enable)');
@@ -62,6 +85,7 @@ export async function startDiscord(queue) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   const channelId = process.env.DISCORD_CHANNEL_ID;
   let liveMessage = null;
+  let pigMessage = null;
   let dirty = false;
 
   const commands = [
@@ -124,24 +148,43 @@ export async function startDiscord(queue) {
     dirty = false;
     try {
       const channel = await client.channels.fetch(channelId);
-      const content = buildQueueMessage(queue);
-      if (liveMessage) {
-        await liveMessage.edit(content);
-      } else {
-        // Fresh start (e.g. after a redeploy): clear any previous queue
-        // messages this bot left behind so the channel keeps a single message.
+      const queueContent = buildQueueMessage(queue);
+      const pigContent = buildPiggyMessage(queue); // null when no tracked variants
+
+      if (!liveMessage) {
+        // Fresh start (e.g. after a redeploy): clear any previous messages this
+        // bot left behind so the channel keeps a single queue message plus, on
+        // stores that track variants, a single Piggy Bank message above it.
         try {
           const recent = await channel.messages.fetch({ limit: 25 });
           for (const m of recent.values()) {
             if (m.author.id === client.user.id) { try { await m.delete(); } catch {} }
           }
         } catch {}
-        liveMessage = await channel.send(content);
+        pigMessage = null;
+        // Post the Piggy Bank tracker first so it sits ABOVE the queue message.
+        if (pigContent) {
+          pigMessage = await channel.send(pigContent);
+          try { await pigMessage.pin(); } catch {}
+        }
+        liveMessage = await channel.send(queueContent);
         try { await liveMessage.pin(); } catch {}
+      } else {
+        await liveMessage.edit(queueContent);
+        if (pigContent) {
+          if (pigMessage) {
+            try { await pigMessage.edit(pigContent); } catch { pigMessage = null; }
+          } else {
+            // Variants appeared after the queue message was already up.
+            pigMessage = await channel.send(pigContent);
+            try { await pigMessage.pin(); } catch {}
+          }
+        }
       }
     } catch (e) {
       console.warn('[discord] refresh failed:', e.message);
       liveMessage = null;
+      pigMessage = null;
     }
   }
 
