@@ -133,6 +133,9 @@ function publicView() {
       activeCount: live ? snap.stats.activeCount : 0,
       priorityCount: live ? snap.stats.priorityCount : 0,
     },
+    // Per-variant sales counters (public tally). Empty on stores that don't
+    // configure any, so the public page simply renders nothing.
+    variants: (snap.variants || []).map((v) => ({ id: v.id, label: v.label, count: v.count })),
   };
 }
 
@@ -221,6 +224,16 @@ app.post('/api/priority-items', requireAuth, (req, res) => {
   res.json({ ok: true, priorityItems: queue.priorityItems });
 });
 app.post('/api/reset', requireAuth, (_req, res) => { queue.reset(); res.json({ ok: true }); });
+// Per-variant counters: replace the tracked-variant definitions, or manually
+// correct a single counter. Both admin only.
+app.post('/api/variants', requireAuth, (req, res) => {
+  queue.setTrackedVariants(req.body.variants || []);
+  res.json({ ok: true, variants: queue.trackedVariants, variantCounts: queue.variantCounts });
+});
+app.post('/api/variant-count/:id', requireAuth, (req, res) => {
+  const ok = queue.setVariantCount(req.params.id, req.body.count);
+  res.json({ ok, variantCounts: queue.variantCounts });
+});
 app.post('/api/remove/:key', requireAuth, (req, res) => res.json({ ok: !!queue.removeSlot(req.params.key) }));
 
 // Inject a synthetic order for testing label printing / the panel. Admin only.
