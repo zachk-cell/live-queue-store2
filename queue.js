@@ -351,7 +351,7 @@ export class QueueEngine extends EventEmitter {
       id,
       buyerId,
       buyer: raw.buyer || 'Buyer',
-      buyerDisplay: raw.buyerDisplay || '',
+      buyerHandle: raw.buyerHandle || '',
       items,
       total: Number(raw.total || 0),
       createdAt: raw.createdAt || Date.now(),
@@ -406,9 +406,9 @@ export class QueueEngine extends EventEmitter {
       key: batchKey,
       buyerId: first.buyerId,
       buyer: first.buyer,
-      // Admin-only cross-check: the buyer's TikTok display name (may differ from
-      // the @handle). Never surfaced on the public view.
-      buyerDisplay: first.buyerDisplay || '',
+      // Admin-only cross-check: the buyer's unique @username (the queue label is
+      // their display name). Never surfaced on the public view.
+      buyerHandle: first.buyerHandle || '',
       orderIds: orders.map((o) => o.id),
       orderCount: orders.length,
       // Per-order breakdown (oldest first) so the panel can group the expanded

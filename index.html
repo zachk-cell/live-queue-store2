@@ -462,17 +462,18 @@
       detailItems += `<div class="dsub">＋ Added since top of queue</div>` + added.map(groupHtml).join('');
     }
     const detailOrds = `<div class="dord">Full order number${e.orderIds.length>1?'s':''}: ${e.orderIds.map(id=>'#'+esc(id)).join('  ')}</div>`;
-    // Admin-only buyer cross-check: @handle plus the TikTok display name when it
-    // differs. Never shown on the public page.
-    const who = `<div class="dwho">Handle: <b>${esc(e.buyer||'')}</b>`
-      + (e.buyerDisplay ? ` &nbsp;·&nbsp; Display name: <b>${esc(e.buyerDisplay)}</b>` : '')
+    // Admin-only cross-check: the queue shows the buyer's DISPLAY NAME; the
+    // expanded view reveals their actual USERNAME so admins can cross-reference
+    // (two people can share a display name). Never shown on the public page.
+    const who = `<div class="dwho">Username: `
+      + (e.buyerHandle ? `<b>${esc(e.buyerHandle)}</b>` : `<span style="color:#8b93a7">not provided by TikTok</span>`)
       + `</div>`;
     return `<div class="slotmain">`
       + `<button class="removeb" title="Remove from queue (e.g. buyer cancelled)" onclick="removeOrder('${e.key}')">✕</button>`
       + `<div class="pos">${e.position}</div>`
       + `<div class="who"><div class="name">${esc(e.buyer)} ${idTag} ${priBadge} ${countBadge} ${holdBadge} ${reorderBadge} ${dupBadge} ${backBadge} ${ordNos}</div>`
       + `<div class="items">${esc(itemStr)}</div>`
-      + `<div class="qtime"><span class="qtimer" data-since="${e.firstOrderAt||''}" data-top="${e.reachedTopAt||''}"></span></div></div>`
+      + `<div class="qtime"><span class="qtimer" data-key="${esc(e.key)}" data-since="${e.firstOrderAt||''}"></span></div></div>`
       + `<button class="caret" title="Show/hide every item in this order" onclick="toggleExpand('${e.key}')">▸</button>`
       + `<button class="labelb" title="Print 2.25×1.25 label" onclick="printLabel('${e.key}')">🏷 Label</button>`
       + `<div class="money">${money(e.total)}</div>`
@@ -482,7 +483,7 @@
       + `<div class="details">${detailItems}${who}${detailOrds}</div>`;
   }
   function slotSig(e){
-    return [e.position,e.buyer,e.buyerDisplay||'',e.isPriority,e.bumped,e.orderCount,e.total,e.priorFulfilled||0,
+    return [e.position,e.buyer,e.buyerHandle||'',e.isPriority,e.bumped,e.orderCount,e.total,e.priorFulfilled||0,
       e.reorderedAtTop?1:0,e.reorderedAtTopCount||0,e.onHold?1:0,e._dupName?1:0,e._idTag||'',
       e.firstOrderAt||'',e.reachedTopAt||'',
       e.orderIds.join(','),e.items.map(i=>i.qty+'x'+i.name).join('|')].join('~');
@@ -491,12 +492,18 @@
   // the diff). "In queue" = since first order; "at top" = since it hit #1.
   function tickTimers(){
     const now = Date.now();
+    const topKey = window.__topKey || null;
+    const topSince = window.__topSince || 0;
     document.querySelectorAll('.qtimer').forEach(el=>{
       const since = Number(el.dataset.since)||0;
-      const top = Number(el.dataset.top)||0;
       if(!since){ el.textContent=''; return; }
       let html = '⏱ in queue '+fmtDur(now-since);
-      if(top) html += ' &nbsp;·&nbsp; <span class="qtop">at top '+fmtDur(now-top)+'</span>';
+      // "at top" only runs for whoever is CURRENTLY #1, timed from when they took
+      // the top spot — so a slot bumped down by a priority order stops showing it
+      // and restarts if it returns to #1.
+      if(topSince && el.dataset.key === topKey){
+        html += ' &nbsp;·&nbsp; <span class="qtop">at top '+fmtDur(now-topSince)+'</span>';
+      }
       el.innerHTML = html;
     });
   }
@@ -624,6 +631,11 @@
   function render(){
     const st = state.stats||{};
     const live = !!st.live;
+    // Track when the CURRENT #1 slot took the top spot. Resets whenever the top
+    // slot changes (a bump/priority displaces it, or it's fulfilled), so the
+    // per-slot "at top" timer only runs for whoever is at #1 right now.
+    const curTopKey = (state.queue && state.queue[0]) ? state.queue[0].key : null;
+    if(curTopKey !== window.__topKey){ window.__topKey = curTopKey; window.__topSince = curTopKey ? Date.now() : 0; }
     document.getElementById('dot').classList.toggle('live', live); // green = live, red = offline
     const badge = document.getElementById('liveBadge');
     badge.textContent = live ? 'LIVE' : 'OFFLINE';
