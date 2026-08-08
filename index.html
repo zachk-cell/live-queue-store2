@@ -129,7 +129,10 @@
   .dwho b{color:#e8ebf2}
   /* Variant counter admin card — fixed to the left margin so it never pushes the
      queue down. Falls back to inline (stacked) when the window is too narrow. */
-  #variants-admin{position:fixed;left:14px;top:150px;width:266px;max-height:calc(100vh - 170px);
+  /* Anchor the card just to the LEFT of the centered queue column (main is
+     max-width 920, so its left edge sits at 50% - 460px). This keeps it beside
+     the content instead of jammed against the browser's left edge. */
+  #variants-admin{position:fixed;right:calc(50% + 484px);top:150px;width:266px;max-height:calc(100vh - 170px);
     overflow:auto;z-index:4}
   @media (max-width:1499px){#variants-admin{position:static;width:auto;max-height:none;margin:6px 0 14px}}
   .vcard{background:#171a21;border:1px solid #272c38;border-radius:12px;padding:12px 14px}
@@ -553,7 +556,7 @@
     const sig = vs.map(v=>v.id+':'+v.label).join('|');
     if(box._sig !== sig){
       box._sig = sig;
-      box.innerHTML = `<div class="vcard"><h3>📊 Bundle variant counters</h3>
+      box.innerHTML = `<div class="vcard"><h3>Piggy Bank Counter</h3>
         <p class="vsub">Adds +1 per unit when an order reaches the top of the queue. Shown on the public page. Counts are cumulative and persist across streams — they only change from a sale, a Save, or a Reset.</p>
         ${vs.map(v=>`<div class="vrow" data-id="${esc(v.id)}">
           <div class="vlab">${esc(v.label)}</div>
