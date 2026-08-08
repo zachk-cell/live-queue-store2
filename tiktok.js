@@ -410,6 +410,24 @@ export function tiktokStatus() {
   };
 }
 
+// Admin-only: expose the current live tokens so they can be pinned into Render
+// env vars (which survive free-tier spin-downs). After the seller authorizes,
+// copy these three values into the service's environment and redeploy — on the
+// next boot the app re-seeds from env and auto-refreshes, so no re-authorization
+// is ever needed. Gated behind requireAuth in server.js (never public).
+export function tiktokTokensForEnv() {
+  return {
+    connected: !!(tokens.accessToken && tokens.shopCipher),
+    shop: tokens.sellerName || tokens.shopId || '',
+    note: 'Copy the three values below into Render → Environment, then Save & redeploy. This keeps the shop connected across restarts.',
+    env: {
+      TIKTOK_ACCESS_TOKEN: tokens.accessToken || '',
+      TIKTOK_REFRESH_TOKEN: tokens.refreshToken || '',
+      TIKTOK_SHOP_CIPHER: tokens.shopCipher || '',
+    },
+  };
+}
+
 // On boot: if enabled and we have a refresh token but no/expired access token, refresh.
 export async function tiktokBoot() {
   if (!tiktokEnabled()) { console.log('[tiktok] ingest disabled'); return; }

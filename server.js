@@ -17,7 +17,7 @@ import { Server as IOServer } from 'socket.io';
 import { authenticator } from 'otplib';
 
 import { QueueEngine } from './queue.js';
-import { tiktokEnabled, mountAuth, startPolling, tiktokBoot, tiktokStatus, debugShops, refetchShopCipher, debugRawOrder, debugCancellations } from './tiktok.js';
+import { tiktokEnabled, mountAuth, startPolling, tiktokBoot, tiktokStatus, tiktokTokensForEnv, debugShops, refetchShopCipher, debugRawOrder, debugCancellations } from './tiktok.js';
 import { startDiscord, discordEnabled } from './discord.js';
 import { startSimulator } from './simulator.js';
 
@@ -391,6 +391,8 @@ app.get('/api/export/:id', requireAuth, (req, res) => {
 // ---------- TikTok Shop ingest ----------
 mountAuth(app, ADMIN); // /auth/tiktok/callback (Redirect URL target)
 app.get('/api/tiktok-status', requireAuth, (_req, res) => res.json(tiktokStatus()));
+// Admin only: reveal current live tokens to pin into Render env (persistence across spin-downs).
+app.get('/api/tiktok-tokens', requireAuth, (_req, res) => res.json(tiktokTokensForEnv()));
 // Debug: inspect the raw shops-endpoint response (admin only).
 app.get('/api/tiktok-debug', requireAuth, async (_req, res) => {
   try { res.json(await debugShops()); }
