@@ -35,9 +35,13 @@
   .brand{text-align:center;color:var(--muted);font-size:11px;letter-spacing:.3px;padding:16px 20px 30px;
     border-top:1px solid var(--line);margin-top:10px;opacity:.8}
   .brand b{color:var(--text);font-weight:700}
-  .tally{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:16px}
-  .tally h2{font-size:13px;margin:0 0 10px;color:var(--muted);font-weight:700;letter-spacing:.4px;text-transform:uppercase}
-  .tally .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+  /* Piggy Bank Tracker — floats to the left margin on wide screens so it never
+     shifts the queue; stacks below the list on narrow screens (phones). */
+  #variants{position:fixed;left:16px;top:96px;width:232px;z-index:6}
+  @media (max-width:1059px){#variants{position:static;width:auto;margin:0 0 16px}}
+  .tally{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .tally h2{font-size:15px;margin:0 0 10px;color:var(--text);font-weight:800;text-align:center;letter-spacing:.2px}
+  .tally .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px}
   .vchip{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:2px}
   .vchip .vl{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vchip .vn{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--pri)}
@@ -66,7 +70,7 @@
     const box = document.getElementById('variants');
     const vs = state.variants || [];
     if(!vs.length){ box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="tally"><h2>📊 Pulled so far this stream</h2><div class="grid">${
+    box.innerHTML = `<div class="tally"><h2>Piggy Bank Tracker</h2><div class="grid">${
       vs.map(v=>`<div class="vchip"><span class="vl">${esc(v.label)}</span><span class="vn">${Number(v.count)||0}</span></div>`).join('')
     }</div></div>`;
   }
