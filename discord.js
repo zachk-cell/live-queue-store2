@@ -17,7 +17,11 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 
-const MAX_SHOWN = 15; // how many upcoming slots to show in the embed
+const MAX_SHOWN = 40; // max upcoming slots to list; also length-guarded (see CHAR_BUDGET)
+// Discord rejects messages over 2000 chars. We fill up to MAX_SHOWN names but stop
+// early if we'd approach this budget, leaving headroom for the header + footer, so
+// the message can never overflow no matter how long the usernames are.
+const CHAR_BUDGET = 1850;
 
 export function discordEnabled() {
   return process.env.DISCORD_ENABLED === 'true' && !!process.env.DISCORD_BOT_TOKEN;
@@ -39,13 +43,21 @@ function buildQueueMessage(queue) {
   if (!q.length) {
     lines.push('_Queue is empty — waiting on orders._');
   } else {
-    for (const e of q.slice(0, MAX_SHOWN)) {
-      // Public-safe: username + position + priority only. No totals, items, or
-      // order counts — matches the public web view.
+    // Public-safe: username + position + priority only. No totals, items, or
+    // order counts — matches the public web view. Fill up to MAX_SHOWN names,
+    // but stop early if we'd approach the character budget so Discord never
+    // rejects the message for being too long.
+    let used = lines.join('\n').length; // chars already used by the header
+    let shown = 0;
+    for (const e of q) {
       const star = e.bumped ? '🔺' : e.isPriority ? '⭐' : '　';
-      lines.push(`\`${String(e.position).padStart(2)}\` ${star} **${e.buyer}**`);
+      const line = `\`${String(e.position).padStart(2)}\` ${star} **${e.buyer}**`;
+      if (shown >= MAX_SHOWN || used + line.length + 1 > CHAR_BUDGET) break;
+      lines.push(line);
+      used += line.length + 1;
+      shown++;
     }
-    if (q.length > MAX_SHOWN) lines.push(`_…and ${q.length - MAX_SHOWN} more_`);
+    if (q.length > shown) lines.push(`_…and ${q.length - shown} more_`);
   }
   lines.push('');
   lines.push('_Order totals and personal details are private and never shown here._');

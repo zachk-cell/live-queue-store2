@@ -462,12 +462,6 @@
       detailItems += `<div class="dsub">＋ Added since top of queue</div>` + added.map(groupHtml).join('');
     }
     const detailOrds = `<div class="dord">Full order number${e.orderIds.length>1?'s':''}: ${e.orderIds.map(id=>'#'+esc(id)).join('  ')}</div>`;
-    // Admin-only cross-check: the queue shows the buyer's DISPLAY NAME; the
-    // expanded view reveals their actual USERNAME so admins can cross-reference
-    // (two people can share a display name). Never shown on the public page.
-    const who = `<div class="dwho">Username: `
-      + (e.buyerHandle ? `<b>${esc(e.buyerHandle)}</b>` : `<span style="color:#8b93a7">not provided by TikTok</span>`)
-      + `</div>`;
     return `<div class="slotmain">`
       + `<button class="removeb" title="Remove from queue (e.g. buyer cancelled)" onclick="removeOrder('${e.key}')">✕</button>`
       + `<div class="pos">${e.position}</div>`
@@ -480,7 +474,7 @@
       + `<div class="actions">${(e.bumped||e.position===1)?'':`<button class="bumpb" title="Bump to top" onclick="bump('${e.key}')">▲</button>`}`
       + `<button class="fulfill" onclick="fulfill('${e.key}')">✓ Fulfilled</button></div>`
       + `</div>`
-      + `<div class="details">${detailItems}${who}${detailOrds}</div>`;
+      + `<div class="details">${detailItems}${detailOrds}</div>`;
   }
   function slotSig(e){
     return [e.position,e.buyer,e.buyerHandle||'',e.isPriority,e.bumped,e.orderCount,e.total,e.priorFulfilled||0,
