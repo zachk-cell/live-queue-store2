@@ -376,6 +376,23 @@ export async function debugCancellations() {
 export function startPolling(queue) {
   const interval = Number(process.env.TIKTOK_POLL_MS) || 10000;
   let sinceEpoch = Math.floor(Date.now() / 1000);
+  // CRASH RECOVERY: if the service restarts mid-stream (crash, redeploy, or the
+  // poller wedging), resume the ingest window from the CURRENT live's start
+  // instead of "now". The first poll then re-scans the whole stream and
+  // backfills every order missed during the outage. upsertOrder is idempotent
+  // on order id, so nothing already in the queue is duplicated or resurrected —
+  // only genuinely-missed orders are added. An optional TIKTOK_BOOT_LOOKBACK_MIN
+  // is used as a fallback when not currently live.
+  if (queue.live && queue.sessionStartedAt) {
+    sinceEpoch = Math.floor(queue.sessionStartedAt / 1000);
+    console.log('[tiktok] boot: resuming ingest window from live start', new Date(queue.sessionStartedAt).toISOString());
+  } else {
+    const lookbackMin = Number(process.env.TIKTOK_BOOT_LOOKBACK_MIN);
+    if (Number.isFinite(lookbackMin) && lookbackMin > 0) {
+      sinceEpoch -= Math.floor(lookbackMin * 60);
+      console.log('[tiktok] boot: applying', lookbackMin, 'min lookback window');
+    }
+  }
   const seen = new Set();
 
   // Each new live starts a fresh window: only orders placed after Go Live count.
