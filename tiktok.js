@@ -266,7 +266,9 @@ async function searchOrderIds(sinceEpoch, orderStatus) {
   const pathName = `/order/${API_VERSION}/orders/search`;
   const ids = [];
   let pageToken = '';
-  for (let page = 0; page < 5; page++) {
+  // Page generously (up to 40×50 = 2000) so a busy window can't silently cut off
+  // the newest orders once the page budget is spent.
+  for (let page = 0; page < 40; page++) {
     const extra = { page_size: 50, ...(pageToken ? { page_token: pageToken } : {}) };
     const bodyReq = { create_time_ge: sinceEpoch, order_status: orderStatus };
     const body = await apiCall('POST', pathName, extra, bodyReq);
@@ -375,23 +377,20 @@ export async function debugCancellations() {
 // ---------------- Poller ----------------
 export function startPolling(queue) {
   const interval = Number(process.env.TIKTOK_POLL_MS) || 10000;
-  let sinceEpoch = Math.floor(Date.now() / 1000);
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  let sinceEpoch = nowEpoch;
   // CRASH RECOVERY: if the service restarts mid-stream (crash, redeploy, or the
-  // poller wedging), resume the ingest window from the CURRENT live's start
-  // instead of "now". The first poll then re-scans the whole stream and
-  // backfills every order missed during the outage. upsertOrder is idempotent
-  // on order id, so nothing already in the queue is duplicated or resurrected —
-  // only genuinely-missed orders are added. An optional TIKTOK_BOOT_LOOKBACK_MIN
-  // is used as a fallback when not currently live.
+  // poller wedging), resume the ingest window so the first poll backfills orders
+  // missed during the outage. The look-back is HARD-CAPPED (default 24h) so it
+  // can NEVER drag in stale orders: we resume from the current live's start, but
+  // never further back than the cap. upsertOrder is idempotent on order id, so
+  // nothing already in the queue is duplicated or resurrected — only
+  // genuinely-missed orders inside the window are added.
+  const capMin = Number(process.env.TIKTOK_BOOT_LOOKBACK_MIN) || 1440; // 24h cap
+  const capFloor = nowEpoch - Math.floor(capMin * 60);
   if (queue.live && queue.sessionStartedAt) {
-    sinceEpoch = Math.floor(queue.sessionStartedAt / 1000);
-    console.log('[tiktok] boot: resuming ingest window from live start', new Date(queue.sessionStartedAt).toISOString());
-  } else {
-    const lookbackMin = Number(process.env.TIKTOK_BOOT_LOOKBACK_MIN);
-    if (Number.isFinite(lookbackMin) && lookbackMin > 0) {
-      sinceEpoch -= Math.floor(lookbackMin * 60);
-      console.log('[tiktok] boot: applying', lookbackMin, 'min lookback window');
-    }
+    sinceEpoch = Math.max(Math.floor(queue.sessionStartedAt / 1000), capFloor);
+    console.log('[tiktok] boot: resuming ingest window from', new Date(sinceEpoch * 1000).toISOString(), `(capped at ${capMin} min back)`);
   }
   const seen = new Set();
 
@@ -405,11 +404,16 @@ export function startPolling(queue) {
     try {
       // 1) Ingest new paid orders (awaiting shipment).
       const ids = await searchOrderIds(sinceEpoch - 30, 'AWAITING_SHIPMENT'); // small overlap for safety
+      let fetched = 0;
       for (const id of ids) {
         if (!id || seen.has(id)) continue;
         const detail = await fetchOrderDetail(id);
-        if (detail) { seen.add(id); queue.upsertOrder(detail); }
+        if (detail) { seen.add(id); queue.upsertOrder(detail); fetched++; }
       }
+      // Diagnostic: how many awaiting-shipment orders TikTok returned this poll,
+      // and how many were processed this cycle. (0 returned = nothing on the
+      // TikTok side to ingest for the window.)
+      console.log(`[tiktok] poll: ${ids.length} awaiting-shipment ids returned since ${new Date((sinceEpoch - 30) * 1000).toISOString()}; ${fetched} processed this cycle`);
       // 2) Auto-remove orders that were cancelled on TikTok after entering the
       //    queue. cancelOrder() is a no-op unless the order is currently queued.
       const cancelledIds = await searchOrderIds(sinceEpoch - 30, 'CANCELLED');
