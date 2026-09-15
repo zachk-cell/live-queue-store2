@@ -227,11 +227,20 @@ export function normalizeOrder(o) {
     const name = (variant && !base.toLowerCase().includes(String(variant).toLowerCase()))
       ? `${base} - ${variant}`
       : base;
+    // Per-item cancellation signal. On a PARTIAL cancellation TikTok flips the
+    // affected line item's display_status to a CANCEL* state and/or fills in a
+    // cancel_reason, while the rest of the order keeps shipping. Capturing it per
+    // item lets the packer see exactly which item to pull without touching the
+    // others.
+    const dstat = String(li.display_status || li.package_status || '').toUpperCase();
+    const itemCancelled = /CANCEL/.test(dstat) || !!(li.cancel_reason && String(li.cancel_reason).trim());
     return {
       name,
       sku: li.seller_sku || li.sku_id || '',
       variant: variant || '',
       qty: li.quantity || 1,
+      cancelled: itemCancelled,
+      displayStatus: dstat || '',
     };
   });
   const handle = pickHandle(o);
@@ -248,9 +257,19 @@ export function normalizeOrder(o) {
     items,
     total: Number(o.payment?.total_amount || o.total_amount || 0),
     createdAt: o.create_time ? o.create_time * 1000 : Date.now(),
-    // TikTok flips an order On Hold when there's something to check before
-    // shipping — most often a buyer cancellation request on an unshipped order.
+    // TikTok flips is_on_hold_order for SEVERAL reasons (address check, order
+    // combine/split, sample/exchange orders, or a pending buyer cancellation).
+    // On its own it does NOT mean "cancellation" — treating it that way was
+    // falsely tagging ordinary held orders (e.g. t-shirts) as CANCEL REQ.
     onHold: !!o.is_on_hold_order,
+    // Definite cancellation signal: the whole order is cancelling, or a specific
+    // line item was flagged cancelled above. This — not onHold — drives the
+    // CANCEL REQ badge and the per-item highlight.
+    cancelRequested: /CANCEL/.test(String(o.status || '').toUpperCase()) || items.some((it) => it.cancelled),
+    // TikTok's deadline to respond to a buyer cancellation request (0 when none).
+    // Captured for diagnostics / a possible future upgrade; not used for the
+    // badge yet because we haven't confirmed it's exclusively cancellation-set.
+    cancelSlaAt: Number(o.cancel_order_sla_time || 0) ? Number(o.cancel_order_sla_time) * 1000 : 0,
   };
 }
 
@@ -333,22 +352,34 @@ export async function debugRawOrder() {
 export async function debugCancellations() {
   const out = { orderFieldSignal: null, cancellationsApi: null };
 
-  // (a) What the order feed already gives us for free (no extra scope):
+  // (a) What the order feed already gives us for free (no extra scope). Sample a
+  //     batch of recent orders and report ONLY structural / boolean signals (no
+  //     PII) so we can confirm, on a real stream, whether cancel_order_sla_time
+  //     is exclusively set on genuine cancellation requests, and whether a
+  //     partial cancellation flips an individual line item's display_status.
   try {
     const since = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 30;
-    let sampleId = null;
-    for (const st of ['AWAITING_SHIPMENT', 'UNPAID', 'ON_HOLD']) {
-      const ids = await searchOrderIds(since, st).catch(() => []);
-      if (ids && ids.length) { sampleId = ids[0]; break; }
+    const ids = [];
+    for (const st of ['ON_HOLD', 'AWAITING_SHIPMENT', 'UNPAID', 'CANCELLED']) {
+      const got = await searchOrderIds(since, st).catch(() => []);
+      for (const id of got.slice(0, 8)) if (!ids.includes(id)) ids.push(id);
+      if (ids.length >= 20) break;
     }
-    if (sampleId) {
-      const body = await apiCall('GET', `/order/${API_VERSION}/orders`, { ids: sampleId });
-      const o = body?.data?.orders?.[0] || {};
+    if (ids.length) {
+      const body = await apiCall('GET', `/order/${API_VERSION}/orders`, { ids: ids.slice(0, 20).join(',') });
+      const orders = body?.data?.orders || [];
       out.orderFieldSignal = {
-        sampleOrderId: sampleId,
-        is_on_hold_order: o.is_on_hold_order,
-        cancel_order_sla_time: o.cancel_order_sla_time,
-        cancellation_ish_keys: Object.keys(o).filter((k) => /cancel|hold/i.test(k)),
+        sampled: orders.length,
+        // One row per order — booleans/timestamps/statuses only, no names.
+        rows: orders.map((o) => ({
+          status: o.status,
+          is_on_hold_order: !!o.is_on_hold_order,
+          has_cancel_sla: !!Number(o.cancel_order_sla_time || 0),
+          norm_cancelRequested: normalizeOrder(o).cancelRequested,
+          item_display_statuses: (o.line_items || o.item_list || []).map((li) => li.display_status || ''),
+          any_item_cancel_reason: (o.line_items || o.item_list || []).some((li) => li.cancel_reason && String(li.cancel_reason).trim()),
+        })),
+        cancellation_ish_keys: orders[0] ? Object.keys(orders[0]).filter((k) => /cancel|hold/i.test(k)) : [],
       };
     } else {
       out.orderFieldSignal = { note: 'No recent orders to inspect on-hold fields.' };
@@ -432,6 +463,15 @@ export function startPolling(queue) {
           const id = String(o.id || o.order_id);
           if (queue.setHold(id, !!o.is_on_hold_order)) {
             console.log('[tiktok] order', id, o.is_on_hold_order ? 'ON HOLD' : 'hold cleared');
+          }
+          // Refresh cancellation state (order-level + per-item). upsertOrder is
+          // idempotent on id, so a cancellation that lands AFTER the order is
+          // queued has to be applied here, not on re-ingest.
+          if (queue.setCancelInfo) {
+            const norm = normalizeOrder(o);
+            if (queue.setCancelInfo(id, { cancelRequested: norm.cancelRequested, items: norm.items })) {
+              console.log('[tiktok] order', id, norm.cancelRequested ? 'CANCELLATION REQUESTED' : 'cancel cleared');
+            }
           }
         }
       }
