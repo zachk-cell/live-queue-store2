@@ -17,7 +17,7 @@ import { Server as IOServer } from 'socket.io';
 import { authenticator } from 'otplib';
 
 import { QueueEngine } from './queue.js';
-import { tiktokEnabled, mountAuth, startPolling, tiktokBoot, tiktokStatus, tiktokTokensForEnv, debugShops, refetchShopCipher, debugRawOrder, debugCancellations } from './tiktok.js';
+import { tiktokEnabled, mountAuth, startPolling, tiktokBoot, tiktokStatus, tiktokTokensForEnv, debugShops, refetchShopCipher, debugRawOrder, debugCancellations, backfillRecent } from './tiktok.js';
 import { startDiscord, discordEnabled } from './discord.js';
 import { startSimulator } from './simulator.js';
 
@@ -435,6 +435,13 @@ app.get('/api/tiktok-debug', requireAuth, async (_req, res) => {
 app.post('/api/tiktok-refetch', requireAuth, async (_req, res) => {
   try { res.json(await refetchShopCipher()); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Backfill orders placed in the last ?min minutes (default 30) — recovers orders
+// made BEFORE Go Live when the queue was started late. Idempotent + only pulls
+// unshipped orders, so it's always safe to run.
+app.post('/api/tiktok-backfill', requireAuth, async (req, res) => {
+  try { res.json(await backfillRecent(queue, Number(req.query.min) || 30)); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 // Debug: inspect one raw order's handle-ish fields to confirm the username key (admin only).
 app.get('/api/tiktok-raw-order', requireAuth, async (_req, res) => {

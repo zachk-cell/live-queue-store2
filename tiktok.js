@@ -417,6 +417,33 @@ export async function debugCancellations() {
   return out;
 }
 
+// Admin-triggered backfill: pull AWAITING_SHIPMENT orders created in the last
+// `minutes` and upsert them. Used to recover orders placed BEFORE Go Live when
+// the queue was started late — the normal poller only ingests from Go Live
+// onward, so those earlier orders would otherwise be missed. Fully idempotent
+// (upsertOrder is a no-op on an order already in the queue), so it is always
+// safe to run, even more than once. Only pulls still-unshipped orders, so
+// already-shipped/cancelled ones are never re-added.
+export async function backfillRecent(queue, minutes = 30) {
+  if (!tiktokEnabled()) return { ok: false, error: 'tiktok ingest disabled' };
+  if (!queue.live) return { ok: false, error: 'queue is not live — Go Live first' };
+  if (!tokens.accessToken || !tokens.shopCipher) return { ok: false, error: 'not authorized with TikTok' };
+  const mins = Math.max(1, Math.min(1440, Number(minutes) || 30));
+  const since = Math.floor(Date.now() / 1000) - mins * 60;
+  const ids = await searchOrderIds(since, 'AWAITING_SHIPMENT');
+  let added = 0, already = 0, failed = 0;
+  for (const id of ids) {
+    if (!id) continue;
+    const existed = queue.orders && queue.orders.has(String(id));
+    const detail = await fetchOrderDetail(id);
+    if (!detail) { failed++; continue; }
+    queue.upsertOrder(detail);
+    if (existed) already++; else added++;
+  }
+  console.log(`[tiktok] backfill(${mins}m): ${ids.length} found, ${added} added, ${already} already present, ${failed} failed`);
+  return { ok: true, minutes: mins, since: new Date(since * 1000).toISOString(), found: ids.length, added, alreadyPresent: already, failed };
+}
+
 // ---------------- Poller ----------------
 export function startPolling(queue) {
   const interval = Number(process.env.TIKTOK_POLL_MS) || 10000;
