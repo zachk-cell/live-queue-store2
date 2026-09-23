@@ -127,14 +127,18 @@
   .clipcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:12px}
   .clip-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
   .clip-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-  .clip-title{font-size:15px;font-weight:800}
+  .clip-title{font-size:15px;font-weight:800;cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:6px}
+  .clip-cav{font-size:10px;color:var(--muted);transition:transform .15s}
+  .clipcard.collapsed .clip-cav{transform:rotate(-90deg)}
+  .clip-n{color:var(--muted);font-weight:700;font-size:13px}
+  .clipcard.collapsed .cliplist{display:none}
   .clip-start{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
   .clip-start b{color:var(--text)}
   .clip-start .run{color:var(--done);font-weight:800}
   .clip-controls{display:flex;gap:8px;flex-wrap:wrap}
   .clip-take{font-weight:800}
   .clip-take:disabled{opacity:.45;cursor:not-allowed}
-  .cliplist{margin-top:12px;display:flex;flex-direction:column;gap:7px}
+  .cliplist{margin-top:12px;display:flex;flex-direction:column;gap:7px;max-height:340px;overflow-y:auto}
   .clip-empty{color:var(--muted);font-size:13px;padding:6px 2px}
   .cliprow{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:7px 10px}
   .cliprow .cidx{color:var(--muted);font-weight:800;font-variant-numeric:tabular-nums;min-width:22px;text-align:center}
@@ -280,7 +284,7 @@
   <div class="clipcard" id="clips-admin">
     <div class="clip-top">
       <div class="clip-head">
-        <span class="clip-title">🎬 Stream Clips</span>
+        <span class="clip-title" onclick="toggleClips()" title="Collapse / expand the clip list"><span class="clip-cav">▾</span>🎬 Stream Clips <span class="clip-n" id="clip-n"></span></span>
         <span class="clip-start" id="clip-startlbl">Start time not set</span>
       </div>
       <div class="clip-controls">
@@ -801,10 +805,27 @@
   }
   function fallbackCopy(text,done){ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} ta.remove(); done&&done(); }
 
+  // Collapse state for the clip list (remembered on this device) so a long list
+  // doesn't push the queue down during a busy stream.
+  let clipsCollapsed=false;
+  try{ clipsCollapsed = localStorage.getItem('pokepig.clipsCollapsed')==='1'; }catch(e){}
+  function applyClipsCollapsed(){
+    const c=document.getElementById('clips-admin');
+    if(c) c.classList.toggle('collapsed', clipsCollapsed);
+  }
+  function toggleClips(){
+    clipsCollapsed=!clipsCollapsed;
+    try{ localStorage.setItem('pokepig.clipsCollapsed', clipsCollapsed?'1':'0'); }catch(e){}
+    applyClipsCollapsed();
+  }
+
   function renderClips(force){
     const start=state.streamStartAt||null;
     window.__streamStart=start;
     const clips=(state.clips||[]).slice().sort((a,b)=>(a.at||0)-(b.at||0));
+    applyClipsCollapsed();
+    const nEl=document.getElementById('clip-n');
+    if(nEl) nEl.textContent = clips.length ? ('('+clips.length+')') : '';
     const lbl=document.getElementById('clip-startlbl');
     if(lbl){
       if(start){ lbl.innerHTML='Start <b>'+esc(fmtMTclock(start))+' MT</b> · running <span class="run" id="clip-run">'+esc(fmtElapsedHMS(Date.now()-start))+'</span>'; }
