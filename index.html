@@ -150,11 +150,12 @@
   .clip-empty{color:var(--muted);font-size:13px;padding:6px 2px}
   .cliprow{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:7px 10px}
   .cliprow .cidx{color:var(--muted);font-weight:800;font-variant-numeric:tabular-nums;min-width:22px;text-align:center}
-  .cliprow .cclock{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;min-width:96px}
+  .cliprow .cclock{background:var(--bg);border:1px solid var(--line);color:var(--text);font-size:12px;font-variant-numeric:tabular-nums;border-radius:8px;padding:5px 8px;width:120px}
+  .cliprow .cmt{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;min-width:82px}
   .cliprow .celapsed{background:var(--bg);border:1px solid var(--line);color:var(--pri);font-weight:800;font-variant-numeric:tabular-nums;
     border-radius:8px;padding:5px 8px;width:92px;text-align:center;font-size:14px}
   .cliprow .cnote{flex:1;min-width:120px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:5px 9px;font-size:13px}
-  .cliprow .celapsed:focus,.cliprow .cnote:focus{outline:none;border-color:var(--accent)}
+  .cliprow .cclock:focus,.cliprow .celapsed:focus,.cliprow .cnote:focus{outline:none;border-color:var(--accent)}
   .cliprow .cdel{background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer;font-size:14px;padding:4px 7px;border-radius:7px;flex:none}
   .cliprow .cdel:hover{color:var(--danger);border-color:var(--danger)}
   .clab{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
@@ -367,7 +368,7 @@
 <div class="modal" id="startModal">
   <div class="card">
     <h3>Stream start time</h3>
-    <p>Enter the time the stream started, in <b>Mountain time (MST/MDT)</b>. Clip elapsed times are measured from this. Defaults to right now.</p>
+    <p>Enter the time the stream started in <b>your local time</b> — it's recorded and shown in <b>Mountain (MT)</b>. Clip elapsed times are measured from this. Defaults to right now.</p>
     <div class="start-row">
       <input type="time" id="start-input" step="1" oninput="updateStartHint()" />
       <button class="ghost" type="button" onclick="startInputToNow()">Use now</button>
@@ -728,12 +729,21 @@
   setInterval(tickTimers, 1000);
 
   // ───────────────────────── Stream clips (editor aid) ─────────────────────────
-  const MT = 'America/Denver'; // Mountain time (auto MST/MDT)
+  // You TYPE times in the operator's LOCAL timezone (whatever clock you're looking
+  // at — e.g. Eastern), and everything is RECORDED / DISPLAYED in Mountain (the
+  // store's timezone). Elapsed times (what the editor uses) are the same in any tz.
+  const MT = 'America/Denver'; // record/display timezone (auto MST/MDT)
   async function postClip(url, body){ return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}); }
   function fmtMTclock(ms){
     if(!ms) return '—';
     try{ return new Date(Number(ms)).toLocaleTimeString('en-US',{timeZone:MT,hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true}); }
     catch(e){ return '—'; }
+  }
+  // Local wall time "HH:MM:SS" (24h) for a given epoch — used to seed the editable
+  // clip-time inputs.
+  function clockHMS(ms){
+    const d=new Date(Number(ms));
+    return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
   }
   function fmtElapsedHMS(ms){
     if(ms==null||isNaN(ms)) return '0:00:00';
@@ -752,28 +762,22 @@
     if([h,m,s].some(n=>isNaN(n)||n<0)) return null;
     return ((h*3600)+(m*60)+s)*1000;
   }
-  // Current Mountain wall time as "HH:MM:SS" (24h) for the <input type=time>.
+  // Current LOCAL wall time as "HH:MM:SS" (24h) for the <input type=time>.
   function mtNowHMS(){
-    const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:MT,hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(new Date()).map(x=>[x.type,x.value]));
-    return p.hour+':'+p.minute+':'+p.second;
+    const d=new Date();
+    return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
   }
-  // Convert an HH:MM:SS wall-clock time in Mountain, on TODAY's Mountain date, to
-  // epoch ms — DST-safe via offset correction (guess UTC, see the zone's wall
-  // time for that instant, correct by the difference).
+  // Convert an HH:MM:SS wall-clock time on today's LOCAL date to epoch ms.
   function mtWallToEpoch(h,m,s){
-    const dp=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:MT,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(x=>[x.type,x.value]));
-    const guess=Date.UTC(+dp.year, +dp.month-1, +dp.day, h||0, m||0, s||0);
-    const zp=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:MT,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(new Date(guess)).map(x=>[x.type,x.value]));
-    let hh=+zp.hour; if(hh===24) hh=0;
-    const asZone=Date.UTC(+zp.year, +zp.month-1, +zp.day, hh, +zp.minute, +zp.second);
-    return guess + (guess - asZone);
+    const d=new Date();
+    d.setHours(h||0, m||0, s||0, 0);
+    return d.getTime();
   }
 
   function openStreamStart(){
     const inp=document.getElementById('start-input');
     if(state.streamStartAt){
-      const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:MT,hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(new Date(state.streamStartAt)).map(x=>[x.type,x.value]));
-      inp.value=p.hour+':'+p.minute+':'+p.second;
+      inp.value=clockHMS(state.streamStartAt);
     } else { inp.value=mtNowHMS(); }
     updateStartHint();
     document.getElementById('startModal').classList.add('open');
@@ -788,7 +792,7 @@
     const at=startEpochFromInput(); const hint=document.getElementById('start-hint');
     if(at==null){ hint.textContent=''; return; }
     const ago=Date.now()-at;
-    hint.textContent='Start = '+fmtMTclock(at)+' MT  ('+(ago<0?'in the future':'about '+fmtElapsedHMS(ago)+' ago')+')';
+    hint.textContent='Start = '+fmtMTclock(at)+' MT  ('+(ago<0?'⚠ in the future — check the time':'about '+fmtElapsedHMS(ago)+' ago')+')';
   }
   async function saveStreamStart(){
     const at=startEpochFromInput();
@@ -809,6 +813,16 @@
     const ms=parseElapsed(val);
     if(ms==null){ renderClips(true); return; } // invalid → revert to stored value
     await postClip('/api/clip/'+encodeURIComponent(id),{at:start+ms});
+  }
+  // Manually set a clip's time. You type in your LOCAL time (matching the start
+  // entry); it's stored/shown in Mountain. Keeps the clip's original date, changing
+  // only the time of day.
+  async function saveClipClock(id,val){
+    const c=(state.clips||[]).find(x=>x.id===id); if(!c){ return; }
+    const parts=String(val).split(':').map(Number);
+    if(parts.length<2 || parts.some(n=>isNaN(n))){ renderClips(true); return; } // invalid → revert
+    const d=new Date(Number(c.at)); d.setHours(parts[0]||0, parts[1]||0, parts[2]||0, 0);
+    await postClip('/api/clip/'+encodeURIComponent(id),{at:d.getTime()});
   }
   async function saveClipNote(id,val){ await postClip('/api/clip/'+encodeURIComponent(id),{note:val}); }
   function copyClips(){
@@ -863,7 +877,9 @@
       const el=start?fmtElapsedHMS(c.at-start):'—';
       return '<div class="cliprow">'
         +'<span class="cidx">'+(i+1)+'</span>'
-        +'<span class="cclock" title="Clip time (Mountain)">'+esc(fmtMTclock(c.at))+'</span>'
+        +'<input class="cclock" type="time" step="1" value="'+esc(clockHMS(c.at))+'" title="Clip time — type in your local time; edit to adjust" '
+          +'onchange="saveClipClock(\''+c.id+'\', this.value)" onkeydown="if(event.key===\'Enter\')this.blur()" />'
+        +'<span class="cmt" title="Recorded time (Mountain)">'+esc(fmtMTclock(c.at))+' MT</span>'
         +'<input class="celapsed" value="'+esc(el)+'" '+(start?'':'disabled')+' title="Elapsed since stream start — edit to adjust (h:mm:ss)" '
           +'onchange="saveClipElapsed(\''+c.id+'\', this.value)" onkeydown="if(event.key===\'Enter\')this.blur()" />'
         +'<input class="cnote" placeholder="note…" value="'+esc(c.note||'')+'" '
