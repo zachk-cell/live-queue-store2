@@ -368,7 +368,7 @@
 <div class="modal" id="startModal">
   <div class="card">
     <h3>Stream start time</h3>
-    <p>Enter the time the stream started in <b>your local time</b> — it's recorded and shown in <b>Mountain (MT)</b>. Clip elapsed times are measured from this. Defaults to right now.</p>
+    <p>The start is set automatically when you go live — edit here only to correct it. Enter the time in <b>your local time</b>; it's recorded and shown in <b>Mountain (MT)</b>. Clip elapsed times are measured from this.</p>
     <div class="start-row">
       <input type="time" id="start-input" step="1" oninput="updateStartHint()" />
       <button class="ghost" type="button" onclick="startInputToNow()">Use now</button>
@@ -570,7 +570,7 @@
     const live = (state.stats||{}).live;
     if(!live){
       if(!(await uiConfirm({title:'Start a new live?',
-        body:'This starts a fresh stream and begins accepting new orders. Anything left from a previous stream that wasn\'t ended is archived to Past streams first.',
+        body:'This starts a fresh stream and begins accepting new orders. The clip timer starts now and the clip log is cleared for the new stream. Anything left from a previous stream that wasn\'t ended is archived to Past streams first.',
         confirmText:'Go live', danger:false}))) return;
       await post('/api/live/on');
     } else {
@@ -724,7 +724,9 @@
     // Live "running for" clock on the Stream Clips card (updates every second
     // without rebuilding the clip list).
     const runEl = document.getElementById('clip-run');
-    if(runEl && window.__streamStart){ runEl.textContent = fmtElapsedHMS(now - window.__streamStart); }
+    // Tick the running clock only while live; when offline it stays frozen at the
+    // total the last renderClips computed (end − start).
+    if(runEl && window.__streamStart && window.__live){ runEl.textContent = fmtElapsedHMS(now - window.__streamStart); }
   }
   setInterval(tickTimers, 1000);
 
@@ -855,14 +857,23 @@
 
   function renderClips(force){
     const start=state.streamStartAt||null;
+    const endAt=state.streamEndAt||null;
+    const live=!!(state.stats&&state.stats.live);
     window.__streamStart=start;
+    window.__streamEndAt=endAt;
+    window.__live=live;
     const clips=(state.clips||[]).slice().sort((a,b)=>(a.at||0)-(b.at||0));
     applyClipsCollapsed();
     const nEl=document.getElementById('clip-n');
     if(nEl) nEl.textContent = clips.length ? ('('+clips.length+')') : '';
     const lbl=document.getElementById('clip-startlbl');
     if(lbl){
-      if(start){ lbl.innerHTML='Start <b>'+esc(fmtMTclock(start))+' MT</b> · running <span class="run" id="clip-run">'+esc(fmtElapsedHMS(Date.now()-start))+'</span>'; }
+      if(start){
+        // Live: ticks from start. Offline: frozen at the end time (total run).
+        const dur = live ? (Date.now()-start) : ((endAt||Date.now())-start);
+        const word = live ? 'running' : 'ran';
+        lbl.innerHTML='Start <b>'+esc(fmtMTclock(start))+' MT</b> · '+word+' <span class="run" id="clip-run">'+esc(fmtElapsedHMS(dur))+'</span>';
+      }
       else { lbl.textContent='Start time not set'; }
     }
     const take=document.getElementById('clip-take');

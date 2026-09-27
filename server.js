@@ -307,7 +307,19 @@ app.post('/api/test-order', requireAuth, (req, res) => {
 
 // Live session control: going live clears the previous queue and starts accepting
 // orders; ending keeps the current queue for fulfillment but stops new orders.
-app.post('/api/live/on', requireAuth, (_req, res) => { queue.goLive(); res.json({ ok: true, live: true }); });
+app.post('/api/live/on', requireAuth, (_req, res) => {
+  queue.goLive();
+  res.json({ ok: true, live: true });
+  // Auto-pull orders placed in the 15 min BEFORE Go Live, so a late queue start
+  // doesn't miss them. Runs in the background so going live stays instant — the
+  // orders stream into the queue as they're fetched. Fully idempotent (only adds
+  // still-unshipped orders not already present), so it can never duplicate.
+  if (tiktokEnabled()) {
+    backfillRecent(queue, 15)
+      .then((r) => console.log('[live/on] pre-live backfill:', JSON.stringify(r)))
+      .catch((e) => console.warn('[live/on] pre-live backfill failed:', e.message));
+  }
+});
 app.post('/api/live/off', requireAuth, (_req, res) => { queue.endLive(); res.json({ ok: true, live: false }); });
 
 // ---------- Fulfilled export (CSV) + stream history (admin only) ----------

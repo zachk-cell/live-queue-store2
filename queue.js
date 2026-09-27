@@ -49,7 +49,8 @@ export class QueueEngine extends EventEmitter {
     // Stream clip log (editor aid): a manually-set stream start time and a running
     // list of clip marks. Independent of the queue — purely a timestamp tool so
     // moments worth clipping can be flagged with one click for the video editor.
-    this.streamStartAt = null; // ms epoch of the manually-set stream start
+    this.streamStartAt = null; // ms epoch of the stream start (auto-set at Go Live; manually editable)
+    this.streamEndAt = null;   // ms epoch the stream went offline — freezes the running timer
     this.clips = [];           // [{ id, at (ms epoch), note }]
     this.clipCounter = 0;
     this._ensureDataDir();
@@ -73,6 +74,7 @@ export class QueueEngine extends EventEmitter {
         this.live = !!cfg.live;
         this.sessionStartedAt = cfg.sessionStartedAt || null;
         this.streamStartAt = cfg.streamStartAt || null;
+        this.streamEndAt = cfg.streamEndAt || null;
         this.clips = Array.isArray(cfg.clips) ? cfg.clips : [];
         this.clipCounter = cfg.clipCounter || 0;
       }
@@ -236,6 +238,7 @@ export class QueueEngine extends EventEmitter {
           live: this.live,
           sessionStartedAt: this.sessionStartedAt,
           streamStartAt: this.streamStartAt,
+          streamEndAt: this.streamEndAt,
           clips: this.clips,
           clipCounter: this.clipCounter,
         })
@@ -609,6 +612,11 @@ export class QueueEngine extends EventEmitter {
     // They are only ever changed by the auto-tally or a manual admin edit/reset.
     this.sessionStartedAt = Date.now();
     this.live = true;
+    // Auto-start the clip timer at go-live and begin a fresh clip log for this
+    // stream. The operator can still adjust the start time manually afterward.
+    this.streamStartAt = Date.now();
+    this.streamEndAt = null;
+    this.clips = [];
     this._persist();
     this.emit('change', { reason: 'go-live' });
   }
@@ -621,6 +629,9 @@ export class QueueEngine extends EventEmitter {
     this.orders.clear();
     this.openBatch.clear();
     this.live = false;
+    // Freeze the clip timer at the moment the stream went offline. The start time
+    // (and clips) are kept so the clip list stays copyable for the editor.
+    if (this.streamStartAt) this.streamEndAt = Date.now();
     this._persist();
     this.emit('change', { reason: 'end-live' });
   }
@@ -712,6 +723,7 @@ export class QueueEngine extends EventEmitter {
       })),
       variantLog: this.variantLog.slice(0, 50),
       streamStartAt: this.streamStartAt,
+      streamEndAt: this.streamEndAt,
       clips: this.clips.slice().sort((a, b) => (a.at || 0) - (b.at || 0)),
       history: this.history.map((s) => ({
         id: s.id,
